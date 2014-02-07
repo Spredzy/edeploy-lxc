@@ -117,10 +117,17 @@ class Host(object):
         )
         hostFd.close()
 
-    def setup_network(self):
+    def _inject_hosts_map(self, hosts_map):
+        hostFd = open('%s/%s/etc/hosts' % (lxc_dir, self.name), 'a')
+        for entry in hosts_map:
+            hostFd.write("%s\n" % entry)
+        hostFd.close()
+
+    def setup_network(self, hosts_map):
         self._setup_hostname()
         self._setup_interface()
         self._setup_host_file()
+        self._inject_hosts_map(hosts_map)
 
     def start_domain(self, conn):
         domain = conn.defineXML(self.xml)
@@ -147,6 +154,7 @@ def start():
     conn = libvirt.open('lxc://')
     roles = set([host['role'] for host in conf['hosts']])
     hosts = set([Host(host, conf, idx) for idx, host in enumerate(conf['hosts'])])
+    hosts_map = ["%s %s.%s %s" % (host.ipv4, host.name, host.domain, host.name) for host in hosts]
 
     if not os.path.exists(lxc_dir):
         print "Creating directory %s..." % lxc_dir
@@ -181,9 +189,15 @@ def start():
         print "  * Configuring ssh"
         host.setup_ssh_key()
         print "  * Configuring network"
-        host.setup_network()
+        host.setup_network(hosts_map)
         print "  * Starting domain"
         host.start_domain(conn)
+
+
+
+
+
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('action', help='action', choices=['stop', 'start', 'restart'])
