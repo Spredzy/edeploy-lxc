@@ -16,203 +16,174 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-import glob
-import augeas
 import yaml
 import subprocess
 import os
-import sys
 import shutil
 import argparse
+import libvirt
 
-def start_bridge():
-    subprocess.call(['brctl', 'addbr', conf['network']['bridge'] ])
-    subprocess.call(['ifconfig', conf['network']['bridge'], conf['network']['gateway'] ])
+class Host(object):
+    """A Host."""
 
-def stop_bridge():
-    subprocess.call(['ifconfig', conf['network']['bridge'], 'down' ])
-    subprocess.call(['brctl', 'delbr', conf['network']['bridge'] ])
+    def __init__(self, host, conf, idx):
+        self.idx = idx + 3
+        self.name = host['name']
+        self.ipv4 = host['address']
+        self.role = host['role']
+        self.ssh_key = conf['general']['ssh_key']
+        self.domain = conf['network']['domain']
+        self.network = conf['network']['bridge']
+        self.gateway = conf['network']['gateway']
+        self.xml = self._get_domain_xml()
 
-def setup_ssh_key(conf, host):
-    if not 'ssh_key' in conf['general']:
+    def _get_domain_xml(self):
+
+        xmlDesc = "<domain type='lxc'>\n" + \
+          "  <name>%s</name>\n" % self.name + \
+          "  <memory>32768</memory>\n" + \
+          "  <os>\n" + \
+          "    <type>exe</type>\n" + \
+          "    <init>/sbin/init</init>\n" + \
+          "  </os>\n" + \
+          "  <vcpu>1</vcpu>\n" + \
+          "  <clock offset='utc'/>\n" + \
+          "  <on_poweroff>destroy</on_poweroff>\n" + \
+          "  <on_reboot>restart</on_reboot>\n" + \
+          "  <on_crash>destroy</on_crash>\n" + \
+          "  <devices>\n" + \
+          "    <emulator>/usr/libexec/libvirt_lxc</emulator>\n" + \
+          "      <filesystem type='mount'>\n" + \
+          "        <source dir='/var/lib/lxc/%s'/>\n" % self.name + \
+          "        <target dir='/'/>\n" + \
+          "      </filesystem>\n" + \
+          "    <interface type='network'>\n" + \
+          "      <source network='%s'/>\n" % self.network + \
+          "    </interface>\n" + \
+          "    <console type='pty' />\n" + \
+          "  </devices>\n" + \
+          "</domain>"
+
+        return xmlDesc
+
+    def create_filesystem(self):
+        subprocess.call(['qemu-img', 'create', '-f', 'qcow2', '-b', "%s/%s.qcow2" % (lxc_dir, self.role), "%s/%s.qcow2" % (lxc_dir, self.name)])
+        if not os.path.exists("%s/%s" % (lxc_dir, self.name)):
+            print "  * Creating temporary mount point %s/%s..." % (lxc_dir, self.name)
+            os.makedirs("%s/%s" % (lxc_dir, self.name))
+        subprocess.call(['qemu-nbd', '-c', "/dev/nbd%s" % self.idx, "%s/%s.qcow2" % (lxc_dir, self.name)])
+        subprocess.call(['mount', "/dev/nbd%s" % self.idx, "%s/%s" % (lxc_dir, self.name)])
+
+    def remove_filesystem(self):
+        subprocess.call(['umount', "%s/%s" % (lxc_dir, self.name)])
+        subprocess.call(['qemu-nbd', '-d', "/dev/nbd%s" % self.idx])
+        os.remove("%s/%s.qcow2" % (lxc_dir, self.name))
+        shutil.rmtree("%s/%s" % (lxc_dir, self.name))
+
+    def setup_ssh_key(self):
+        if not self.ssh_key:
             return
 
-    ssh_dir = '/var/lib/lxc/%s/rootfs/root/.ssh/' % host['name']
-    os.makedirs(ssh_dir)
-    shutil.copyfile(conf['general']['ssh_key'], ssh_dir + '/authorized_keys')
+        ssh_dir = "%s/%s/root/.ssh/" % (lxc_dir, self.name)
+        if not os.path.exists(ssh_dir):
+            os.makedirs(ssh_dir)
+        print "  * Copying %s to %s/authorized_keys" % (self.ssh_key, ssh_dir)
+        shutil.copyfile(self.ssh_key, "%s/authorized_keys" % ssh_dir)
 
+    def _setup_hostname(self):
+        hostnameFd = open('%s/%s/etc/hostname' % (lxc_dir, self.name), 'w')
+        hostnameFd.write("%s.%s" % (self.name, self.domain))
+        hostnameFd.close()
 
-def stop():
-    print "stopping"
-    for host in conf['hosts']:
+    def _setup_interface(self):
+        debian_interfaces = '%s/%s/etc/network/interfaces' % (lxc_dir, self.name)
+        netFd = open(debian_interfaces, 'w')
+        netFd.write("auto lo\n" +
+                    "iface lo inet loopback\n" +
+                    "auto eth0\n" +
+                    "iface eth0 inet static\n" +
+                    "    address %s\n" % self.ipv4 +
+                    "    netmask 255.255.255.0\n" +
+                    "    gateway %s\n" % self.gateway)
+        netFd.close()
 
-        aufs_rw_dir = "/tmp/base_aufs/%s" % host['name']
-        lxc_dir = "/var/lib/lxc/%s" % host['name']
-        try:
-            subprocess.call(['lxc-kill', '-n', host['name'] ])
-            subprocess.call(['lxc-stop', '-n', host['name'] ])
-        except:
-            print "foo"# nothing
-
-        if os.path.exists(lxc_dir):
-            print("[%s]" % host['name'])
-            try:
-                subprocess.call(['umount', lxc_dir ])
-            except:
-                print("Failed to umount %s" % lxc_dir)
-            shutil.rmtree(lxc_dir)
-
-            if os.path.exists(aufs_rw_dir):
-                shutil.rmtree(aufs_rw_dir)
-
-    stop_bridge()
-
-def start():
-    start_bridge()
-
-
-    roles = []
-    
-    for host in conf['hosts']:
-        if host['role'] not in roles:
-            roles.append(host['role'])
-
-    for role in roles:
-        rootfs = '/var/lib/lxc/%s/rootfs' % role
-        if not os.path.exists(rootfs):
-            os.makedirs(rootfs)
-        subprocess.call(['rsync', '-av', '--delete', '--numeric-ids', '%s/%s/' % (conf['edeploy']['dir'], role), rootfs])
-        subprocess.call(['tar', 'xf', '/usr/share/debootstrap/devices.tar.gz'], cwd=rootfs)
-
-        if not os.path.exists(rootfs + '/dev/pts'):
-            os.makedirs(rootfs + '/dev/pts')
-
-        # work around for LXC bug, rmmod module on the host system
-        shutil.copyfile(rootfs + '/bin/true', rootfs + '/bin/kmod')
-
-    for host in conf['hosts']:
-        print("[%s]" % host['name'])
-
-        aufs_rw_dir = "/tmp/base_aufs/%s" % host['name']
-        lxc_dir = "/var/lib/lxc/%s" % host['name']
-        if os.path.exists(lxc_dir):
-            try:
-                print "foo"
-                subprocess.call(['lxc-kill', '-n', host['name'] ])
-                subprocess.call(['lxc-stop', '-n', host['name'] ])
-            except:
-                print "foo"# nothing
-        else:
-            os.makedirs(lxc_dir)
-            os.makedirs(aufs_rw_dir)
-
-        subprocess.call(['mount', '-t', 'aufs', '-o', 'br=%s:%s' % (aufs_rw_dir, '/var/lib/lxc/%s' % host['role']), 'none', lxc_dir ])
-        #mount -t aufs -o br=/tmp/base_aufs/os-ci-test4:/var/lib/lxc/basesys none /var/lib/lxc/os-ci-test4
-
-
-        lxcConfFd = open('/var/lib/lxc/%s/config' % host['name'], 'w')
-        lxcConfFd.write("lxc.network.type = veth\n" +
-            "lxc.network.flags = up\n" +
-            "lxc.network.link = %s\n" % conf['network']['bridge'] +
-            "lxc.rootfs = /var/lib/lxc/%s/rootfs\n" % host['name'] +
-            "lxc.tty = 4\n" +
-            "lxc.pts = 1024\n" +
-            "lxc.utsname = %s\n" % host['name'] +
-            "lxc.cgroup.devices.deny = a\n" +
-            "lxc.cgroup.devices.allow = c 1:3 rwm\n" +
-            "lxc.cgroup.devices.allow = c 1:5 rwm\n" +
-            "lxc.cgroup.devices.allow = c 5:1 rwm\n" +
-            "lxc.cgroup.devices.allow = c 5:0 rwm\n" +
-            "lxc.cgroup.devices.allow = c 1:9 rwm\n" +
-            "lxc.cgroup.devices.allow = c 1:8 rwm\n" +
-            "lxc.cgroup.devices.allow = c 136:* rwm\n" +
-            "lxc.cgroup.devices.allow = c 5:2 rwm\n" +
-            "lxc.cgroup.devices.allow = c 254:0 rwm\n" +
-            "lxc.cgroup.devices.allow = b 7:* rwm # /dev/loop\n" +
-            "lxc.mount.entry = proc proc proc nodev,noexec,nosuid 0 0\n" +
-            "lxc.mount.entry = sysfs sys sysfs defaults  0 0\n" +
-            "lxc.cgroup.memory.limit_in_bytes = 536870912")
-        lxcConfFd.close()
-
-        debian_interfaces = '/var/lib/lxc/%s/rootfs/etc/network/interfaces' % host['name']
-        if os.path.exists(debian_interfaces):
-            netFd = open(debian_interfaces, 'w')
-            netFd.write("auto lo\n" +
-                "iface lo inet loopback\n" +
-                "auto eth0\n" +
-                "iface eth0 inet static\n" +
-                "    address %s\n" % host['address'] +
-                "    netmask 255.255.255.0\n" +
-                "    gateway %s\n" % conf['network']['gateway'])
-            netFd.close()
-        else:
-            fd = open('/var/lib/lxc/%s/rootfs/etc/init/lxc-sysinit.conf' % host['name'], 'w')
-            fd.write("start on startup\n" +
-                "env container\n" +
-                "pre-start script\n" +
-                "if [ \"x$container\" != \"xlxc\" -a \"x$container\" != \"xlibvirt\" ]; then\n" +
-                "stop;\n" +
-                "fi\n" +
-                "initctl start tty TTY=console\n" +
-                "rm -f /var/lock/subsys/*\n" +
-                "rm -f /var/run/*.pid\n" +
-                "telinit 3\n" +
-                "exit 0;\n" +
-                "end script\n"
-            )
-            fd.close()
-
-            fd = open('/var/lib/lxc/%s/rootfs/etc/sysconfig/network-scripts/ifcfg-eth0' % host['name'], 'w')
-            fd.write(
-                "DEVICE=eth0\n" +
-                "ONBOOT=yes\n" +
-                "BOOTPROTO=static\n" +
-                "IPADDR=%s\n" % host['address'] +
-                "NETMASK=255.255.255.0\n" +
-                "GATEWAY=%s\n" % conf['network']['gateway']
-            )
-            fd.close()
-            fd = open('/var/lib/lxc/%s/rootfs/etc/sysconfig/network' % host['name'], 'w')
-            fd.write(
-                "NETWORKING=yes\n" +
-                "HOSTNAME=%s.%s\n" % (host['name'], conf['network']['domain'])
-            )
-            fd.close()
-
-        hostFd = open('/var/lib/lxc/%s/rootfs/etc/hosts' % host['name'], 'w')
+    def _setup_host_file(self):
+        hostFd = open('%s/%s/etc/hosts' % (lxc_dir, self.name), 'w')
         hostFd.write(
-            "127.0.0.1 %s.%s %s localhost\n" % (host['name'], conf['network']['domain'], host['name']) +
+            "127.0.0.1 %s.%s %s localhost\n" % (self.name, self.domain, self.name) +
             "::1     localhost ip6-localhost ip6-loopback\n" +
             "ff02::1 ip6-allnodes\n" +
             "ff02::2 ip6-allrouters\n"
         )
-        for h in conf['hosts']:
-            hostFd.write("%s %s.%s %s\n" % (h['address'], h['name'], conf['network']['domain'], h['name']))
-
         hostFd.close()
 
-        a = augeas.Augeas(root="/var/lib/lxc/%s/rootfs" % host['name'])
-        a.set("/files/etc/hostname/hostname", "%s" % host['name'])
-        a.save()
+    def setup_network(self):
+        self._setup_hostname()
+        self._setup_interface()
+        self._setup_host_file()
 
-        setup_ssh_key(conf, host)
+    def start_domain(self, conn):
+        domain = conn.defineXML(self.xml)
+        domain.create()
 
-        if 'cloudinit' in host:
-            cloudinit_name = os.path.basename(host['cloudinit']).replace('.cloudinit', '')
-            print("    setting cloudinit flat file datasource")
-            nocloud_dir = '/var/lib/lxc/%s/rootfs/var/lib/cloud/seed/nocloud' % host['name']
-            if not os.path.exists(nocloud_dir):
-                os.makedirs(nocloud_dir)
-            open(os.path.join(nocloud_dir, 'user-data'), 'w').write(open(host['cloudinit']).read())
-            open(os.path.join(nocloud_dir, 'meta-data'), 'w').write('local-hostname: %s' % host['name'])
-            open('/var/lib/lxc/%s/rootfs/etc/cloud/cloud.cfg.d/90_dpkg.cfg' % (
-                    host['name'], ), 'w').write('''
-dsmod: local
+    def stop_domain(self, conn):
+        domain = conn.lookupByName(self.name)
+        domain.destroy()
+        domain.undefine()
 
-datasource_list: [ NoCloud ]
-''')
-        print("    launching")
-        subprocess.call(['lxc-start', '-d', '-L', '/tmp/lxc-%s.log' % host['name'], '-n', host['name'] ])
+
+def stop():
+    print "stopping"
+    conn = libvirt.open('lxc://')
+    hosts = set([Host(host, conf, idx) for idx, host in enumerate(conf['hosts'])])
+
+    for host in hosts:
+        host.stop_domain(conn)
+        host.remove_filesystem()
+
+
+def start():
+    ''' '''
+    conn = libvirt.open('lxc://')
+    roles = set([host['role'] for host in conf['hosts']])
+    hosts = set([Host(host, conf, idx) for idx, host in enumerate(conf['hosts'])])
+
+    if not os.path.exists(lxc_dir):
+        print "Creating directory %s..." % lxc_dir
+        os.makedirs(lxc_dir)
+
+    if not os.path.exists(tmp_dir):
+        print "Creating directory %s..." % tmp_dir
+        os.makedirs(tmp_dir)
+
+    for role in roles:
+        print "Creating role %s..." % role
+        print "  * Creating empty image"
+        subprocess.call(['dd', 'if=/dev/zero', "of=%s/%s.img" % (lxc_dir, role), 'bs=1G', 'count=5'])
+        print "  * Formatting (ext4) empty image"
+        subprocess.call(['mkfs.ext4', "%s/%s.img" % (lxc_dir, role)])
+        if not os.path.exists("%s/%s" % (tmp_dir, role)):
+            print "  * Creating temporary mount point %s/tmp-%s..." % (tmp_dir,role)
+            os.makedirs("%s/tmp-%s" % (tmp_dir, role))
+        print "  * Mounting empty image"
+        subprocess.call(['mount', "%s/%s.img" % (lxc_dir, role), "%s/tmp-%s" % (tmp_dir, role)])
+        print "  * Copying edeploy content from %s/%s to %s/tmp-%s" % (conf['edeploy']['dir'], role, tmp_dir, role)
+        os.system("cp -r %s/%s/* %s/tmp-%s/" % (conf['edeploy']['dir'], role, tmp_dir, role))
+        print "  * Unmounting %s/tmp-%s" % (tmp_dir, role)
+        subprocess.call(['umount', "%s/tmp-%s" % (tmp_dir, role)])
+        print "  * Creating base qcow2 file"
+        subprocess.call(['qemu-img', 'convert', '-f', 'raw', '-O', 'qcow2', "%s/%s.img" % (lxc_dir, role), "%s/%s.qcow2" % (lxc_dir, role)])
+
+    for host in hosts:
+        print "Building host %s..." % host.name
+        print "  * Creating filesystem"
+        host.create_filesystem()
+        print "  * Configuring ssh"
+        host.setup_ssh_key()
+        print "  * Configuring network"
+        host.setup_network()
+        print "  * Starting domain"
+        host.start_domain(conn)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('action', help='action', choices=['stop', 'start', 'restart'])
@@ -221,7 +192,10 @@ parser.add_argument('--config', help='configuration file', required=True)
 args = parser.parse_args()
 
 stream = file(args.config, 'r')
-conf=yaml.load(stream)
+conf = yaml.load(stream)
+lxc_dir = conf['general']['lxc_dir']
+tmp_dir = conf['general']['tmp_dir']
+
 
 if args.action == 'start':
     start()
