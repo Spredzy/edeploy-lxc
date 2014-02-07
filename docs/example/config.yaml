@@ -2,8 +2,7 @@ general:
     ssh_key: /home/yguenane/.ssh/id_rsa.pub
     lxc_dir: /var/lib/lxc
     tmp_dir: /tmp/lxc
-edeploy:
-  dir: /var/lib/debootstrap/install/D7-H.1.0.0
+    edeploy_dir: /var/lib/debootstrap/install/D7-H.1.0.0
 hosts:
   -
     address: 192.168.122.48
@@ -24,7 +23,7 @@ networks:
     name: tmpen0vance
     type: bridge
     domain: yanisguenane.fr
-    gateway: 192.168.158.1
+    gateway: 192.168.122.1
   -
     name: tmpen0vance42
     type: bridge
