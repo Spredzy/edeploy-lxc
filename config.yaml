@@ -1,7 +1,3 @@
-network:
-    domain: yanisguenane.fr
-    bridge: default
-    gateway: 192.168.122.1
 general:
     ssh_key: /home/yguenane/.ssh/id_rsa.pub
     lxc_dir: /var/lib/lxc
@@ -13,7 +9,24 @@ hosts:
     address: 192.168.122.48
     name: os-ci-test4
     role: openstack-full
+    memory: 2048
+    vcpu: 2
+    network: tmpen0vance
   -
-    address: 192.168.122.49
+    address: 192.168.134.49
     name: os-ci-test5
     role: openstack-full
+    memory: 2048
+    vcpu: 2
+    network: tmpen0vance42
+networks:
+  -
+    name: tmpen0vance
+    type: bridge
+    domain: yanisguenane.fr
+    gateway: 192.168.158.1
+  -
+    name: tmpen0vance42
+    type: bridge
+    domain:  enovance.fr
+    gateway: 192.168.134.1

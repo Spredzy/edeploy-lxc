@@ -16,37 +16,87 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+import uuid
 import yaml
 import subprocess
 import os
 import shutil
 import argparse
 import libvirt
+import random
+
+def random_mac():
+    """Generate a random MAC address."""
+
+    mac = [0x00, 0x16, 0x3e,
+        random.randint(0x00, 0x7f), 
+        random.randint(0x00, 0xff),
+        random.randint(0x00, 0xff)]
+    return ':'.join(map(lambda x: "%02x" % x, mac))
+
+class Network(object):
+    """A Network."""
+
+    def __init__(self, network):
+        self.name = network['name']
+        self.network_type = network['type']
+        self.gateway = network['gateway']
+        self.domain = network['gateway']
+        self.xml = self._get_network_xml()
+
+    def _get_network_xml(self):
+
+        xmlDesc = "<network>\n" + \
+            "  <name>%s</name>\n" % self.name + \
+            "  <uuid>%s</uuid>\n" % str(uuid.uuid4()) + \
+            "  <forward mode='nat'>\n" + \
+            "    <nat>\n" + \
+            "      <port start='1024' end='65535'/>\n" + \
+            "    </nat>\n" + \
+            "  </forward>\n" + \
+            "  <bridge name='%s' stp='on' delay='0' />\n" % self.name + \
+            "  <mac address='%s'/>\n" % random_mac() + \
+            "  <ip address='%s' netmask='255.255.255.0'>\n" % self.gateway + \
+            "  </ip>\n" + \
+            "</network>"
+
+        return xmlDesc
+
+    def define_network(self, conn):
+        network = conn.networkDefineXML(self.xml)
+        network.create()
+        
+
+    def undefine_network(self, conn):
+        network = conn.networkLookupByName(self.name)
+        network.destroy()
+        network.undefine()
+
 
 class Host(object):
     """A Host."""
 
-    def __init__(self, host, conf, idx):
+    def __init__(self, host, conf, idx, network):
         self.idx = idx + 3
         self.name = host['name']
         self.ipv4 = host['address']
         self.role = host['role']
+        self.memory = host['memory']
+        self.vcpu = host['vcpu']
         self.ssh_key = conf['general']['ssh_key']
-        self.domain = conf['network']['domain']
-        self.network = conf['network']['bridge']
-        self.gateway = conf['network']['gateway']
+        self.network = network
         self.xml = self._get_domain_xml()
 
     def _get_domain_xml(self):
 
         xmlDesc = "<domain type='lxc'>\n" + \
           "  <name>%s</name>\n" % self.name + \
-          "  <memory>32768</memory>\n" + \
+          "  <memory unit='MB'>%s</memory>\n" %self.memory + \
           "  <os>\n" + \
           "    <type>exe</type>\n" + \
           "    <init>/sbin/init</init>\n" + \
           "  </os>\n" + \
-          "  <vcpu>1</vcpu>\n" + \
+          "  <vcpu>%s</vcpu>\n" % self.vcpu + \
           "  <clock offset='utc'/>\n" + \
           "  <on_poweroff>destroy</on_poweroff>\n" + \
           "  <on_reboot>restart</on_reboot>\n" + \
@@ -58,7 +108,7 @@ class Host(object):
           "        <target dir='/'/>\n" + \
           "      </filesystem>\n" + \
           "    <interface type='network'>\n" + \
-          "      <source network='%s'/>\n" % self.network + \
+          "      <source network='%s'/>\n" % self.network.name + \
           "    </interface>\n" + \
           "    <console type='pty' />\n" + \
           "  </devices>\n" + \
@@ -92,7 +142,7 @@ class Host(object):
 
     def _setup_hostname(self):
         hostnameFd = open('%s/%s/etc/hostname' % (lxc_dir, self.name), 'w')
-        hostnameFd.write("%s.%s" % (self.name, self.domain))
+        hostnameFd.write("%s.%s" % (self.name, self.network.domain))
         hostnameFd.close()
 
     def _setup_interface(self):
@@ -104,13 +154,13 @@ class Host(object):
                     "iface eth0 inet static\n" +
                     "    address %s\n" % self.ipv4 +
                     "    netmask 255.255.255.0\n" +
-                    "    gateway %s\n" % self.gateway)
+                    "    gateway %s\n" % self.network.gateway)
         netFd.close()
 
     def _setup_host_file(self):
         hostFd = open('%s/%s/etc/hosts' % (lxc_dir, self.name), 'w')
         hostFd.write(
-            "127.0.0.1 %s.%s %s localhost\n" % (self.name, self.domain, self.name) +
+            "127.0.0.1 %s.%s %s localhost\n" % (self.name, self.network.domain, self.name) +
             "::1     localhost ip6-localhost ip6-loopback\n" +
             "ff02::1 ip6-allnodes\n" +
             "ff02::2 ip6-allrouters\n"
@@ -139,22 +189,33 @@ class Host(object):
         domain.undefine()
 
 
+
+
 def stop():
-    print "stopping"
+    print "Stopping..."
     conn = libvirt.open('lxc://')
-    hosts = set([Host(host, conf, idx) for idx, host in enumerate(conf['hosts'])])
+    networks = [Network(network) for network in conf['networks']]
+    hosts = [Host(host, conf, idx, [network for network in networks if network.name == host['network']][0]) for idx, host in enumerate(conf['hosts'])]
 
     for host in hosts:
         host.stop_domain(conn)
         host.remove_filesystem()
 
+    for network in networks:
+        network.undefine_network(conn)
+
 
 def start():
-    ''' '''
+
     conn = libvirt.open('lxc://')
     roles = set([host['role'] for host in conf['hosts']])
-    hosts = set([Host(host, conf, idx) for idx, host in enumerate(conf['hosts'])])
-    hosts_map = ["%s %s.%s %s" % (host.ipv4, host.name, host.domain, host.name) for host in hosts]
+    networks = [Network(network) for network in conf['networks']]
+    hosts = [Host(host, conf, idx, [network for network in networks if network.name == host['network']][0]) for idx, host in enumerate(conf['hosts'])]
+    hosts_map = ["%s %s.%s %s" % (host.ipv4, host.name, host.network.domain, host.name) for host in hosts]
+
+    for network in networks:
+        print "Setting up network (%s)... " % network
+        network.define_network(conn)
 
     if not os.path.exists(lxc_dir):
         print "Creating directory %s..." % lxc_dir
