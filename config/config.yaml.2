@@ -1,0 +1,96 @@
+general:
+    ssh_key: /home/yguenane/.ssh/id_rsa.pub
+    lxc_dir: /var/lib/lxc
+    tmp_dir: /tmp/lxc
+    edeploy_dir: /var/lib/debootstrap/install/D7-H.1.3.0
+hosts:
+  -
+    address: 192.168.142.42
+    name: puppet
+    role: puppet-master
+    memory: 3062
+    vcpu: 2
+    network: toto
+  -
+    address: 192.168.142.2
+    name: lb001
+    role: openstack-full
+    memory: 3062
+    vcpu: 2
+    network: toto
+  -
+    address: 192.168.142.3
+    name: lb002
+    role: openstack-full
+    memory: 3062
+    vcpu: 2
+    network: toto
+  -
+    address: 192.168.142.4
+    name: mgmt001
+    role: openstack-full
+    memory: 7168
+    vcpu: 2
+    network: toto
+  -
+    address: 192.168.142.5
+    name: mgmt002
+    role: openstack-full
+    memory: 3062
+    vcpu: 2
+    network: toto
+  -
+    address: 192.168.142.6
+    name: mgmt003
+    role: openstack-full
+    memory: 3062
+    vcpu: 2
+    network: toto
+  -
+    address: 192.168.142.7
+    name: cmpt001
+    role: openstack-full
+    memory: 3062
+    vcpu: 2
+    network: toto
+  -
+    address: 192.168.142.8
+    name: cmpt002
+    role: openstack-full
+    memory: 3062
+    vcpu: 2
+    network: toto
+  -
+    address: 192.168.142.9
+    name: net001
+    role: openstack-full
+    memory: 3062
+    vcpu: 2
+    network: toto
+  -
+    address: 192.168.142.10
+    name: strg001
+    role: openstack-full
+    memory: 3062
+    vcpu: 2
+    network: toto
+  -
+    address: 192.168.142.11
+    name: strg002
+    role: openstack-full
+    memory: 3062
+    vcpu: 2
+    network: toto
+  -
+    address: 192.168.134.12
+    name: strg003
+    role: openstack-full
+    memory: 3062
+    vcpu: 2
+    network: toto
+networks:
+  -
+    name: toto
+    type: bridge
+    domain: yanisguenane.fr
+    gateway: 192.168.142.1

@@ -69,22 +69,25 @@ def start(conf):
         os.makedirs(general.tmp_dir)
 
     for role in roles:
-        print "Creating role %s..." % role
-        print "  * Creating empty image"
-        subprocess.call(['dd', 'if=/dev/zero', "of=%s/%s.img" % (general.lxc_dir, role), 'bs=1G', 'count=5'])
-        print "  * Formatting (ext4) empty image"
-        subprocess.call(['mkfs.ext4', "%s/%s.img" % (general.lxc_dir, role)])
-        if not os.path.exists("%s/%s" % (general.tmp_dir, role)):
-            print "  * Creating temporary mount point %s/tmp-%s..." % (general.tmp_dir,role)
-            os.makedirs("%s/tmp-%s" % (general.tmp_dir, role))
-        print "  * Mounting empty image"
-        subprocess.call(['mount', "%s/%s.img" % (general.lxc_dir, role), "%s/tmp-%s" % (general.tmp_dir, role)])
-        print "  * Copying edeploy content from %s/%s to %s/tmp-%s" % (general.edeploy_dir, role, general.tmp_dir, role)
-        os.system("cp -r %s/%s/* %s/tmp-%s/" % (general.edeploy_dir, role, general.tmp_dir, role))
-        print "  * Unmounting %s/tmp-%s" % (general.tmp_dir, role)
-        subprocess.call(['umount', "%s/tmp-%s" % (general.tmp_dir, role)])
-        print "  * Creating base qcow2 file"
-        subprocess.call(['qemu-img', 'convert', '-f', 'raw', '-O', 'qcow2', "%s/%s.img" % (general.lxc_dir, role), "%s/%s.qcow2" % (general.lxc_dir, role)])
+        if not os.path.exists('%s/%s.qcow2' % (general.lxc_dir, role)):
+            print "Creating role %s..." % role
+            print "  * Creating empty image"
+            subprocess.call(['dd', 'if=/dev/zero', "of=%s/%s.img" % (general.lxc_dir, role), 'bs=1G', 'count=8'])
+            print "  * Formatting (ext4) empty image"
+            subprocess.call(['mkfs.ext4', "%s/%s.img" % (general.lxc_dir, role)])
+            if not os.path.exists("%s/%s" % (general.tmp_dir, role)):
+                print "  * Creating temporary mount point %s/tmp-%s..." % (general.tmp_dir,role)
+                os.makedirs("%s/tmp-%s" % (general.tmp_dir, role))
+            print "  * Mounting empty image"
+            subprocess.call(['mount', "%s/%s.img" % (general.lxc_dir, role), "%s/tmp-%s" % (general.tmp_dir, role)])
+            print "  * Copying edeploy content from %s/%s to %s/tmp-%s" % (general.edeploy_dir, role, general.tmp_dir, role)
+            os.system("cp -rcp %s/%s/* %s/tmp-%s/" % (general.edeploy_dir, role, general.tmp_dir, role))
+            print "  * Unmounting %s/tmp-%s" % (general.tmp_dir, role)
+            subprocess.call(['umount', "%s/tmp-%s" % (general.tmp_dir, role)])
+            print "  * Creating base qcow2 file"
+            subprocess.call(['qemu-img', 'convert', '-f', 'raw', '-O', 'qcow2', "%s/%s.img" % (general.lxc_dir, role), "%s/%s.qcow2" % (general.lxc_dir, role)])
+            print "  * Removing img files"
+            subprocess.call(['rm', '-f', "%s/%s.img" % (general.lxc_dir, role)])
 
     for host in hosts:
         print "Building host %s..." % host.name
@@ -92,6 +95,8 @@ def start(conf):
         host.create_filesystem()
         print "  * Configuring ssh"
         host.setup_ssh_key()
+        print "  * Configuring cloud init"
+        #host.setup_cloudinit()
         print "  * Configuring network"
         host.setup_network(hosts_map)
         print "  * Starting domain"

@@ -28,12 +28,13 @@ class Host(object):
     """A Host."""
 
     def __init__(self, host, general, idx, network):
-        self.idx = idx + 1
+        self.idx = idx + 3
         self.name = host['name']
         self.ipv4 = host['address']
         self.role = host['role']
         self.memory = host['memory']
         self.vcpu = host['vcpu']
+        #self.cloudinit = host['cloudinit']
         self.ssh_key = general.ssh_key
         self.network = network
         self.config = general
@@ -75,8 +76,11 @@ class Host(object):
             os.makedirs("%s/%s" % (self.config.lxc_dir, self.name))
         subprocess.call(['qemu-nbd', '-c', "/dev/nbd%s" % self.idx, "%s/%s.qcow2" % (self.config.lxc_dir, self.name)])
         subprocess.call(['mount', "/dev/nbd%s" % self.idx, "%s/%s" % (self.config.lxc_dir, self.name)])
+        print "  * Creating proc mount point %s/%s/proc..." % (self.config.lxc_dir, self.name)
+        #subprocess.call(['mount', '-t', 'proc', 'proc', "%s/%s/proc" % (self.config.lxc_dir, self.name)])
 
     def remove_filesystem(self):
+        #subprocess.call(['umount', "%s/%s/proc" % (self.config.lxc_dir, self.name)])
         subprocess.call(['umount', "%s/%s" % (self.config.lxc_dir, self.name)])
         subprocess.call(['qemu-nbd', '-d', "/dev/nbd%s" % self.idx])
         os.remove("%s/%s.qcow2" % (self.config.lxc_dir, self.name))
@@ -91,10 +95,35 @@ class Host(object):
             os.makedirs(ssh_dir)
         print "  * Copying %s to %s/authorized_keys" % (self.ssh_key, ssh_dir)
         shutil.copyfile(self.ssh_key, "%s/authorized_keys" % ssh_dir)
+        #shutil.copyfile('/root/.ssh/id_rsa.pub', "%s/authorized_keys" % ssh_dir)
+
+    def setup_cloudinit(self):
+        print ">>>> Debug"
+        #if not self.cloudinit:
+        #    return
+        print ' Cloudinit: %s' % self.cloudinit
+
+        nocloud_dir = '%s/%s/var/lib/cloud/seed/nocloud' % (self.config.lxc_dir, self.name)
+        print ' Cloudinit: %s' % nocloud_dir
+        if not os.path.exists(nocloud_dir):
+            os.makedirs(nocloud_dir)
+            
+        open(os.path.join(nocloud_dir, 'user-data'), 'w').write(open(self.cloudinit).read())
+        open(os.path.join(nocloud_dir, 'meta-data'), 'w').write('local-hostname: %s' % self.name)
+
+        if not os.path.exists('%s/%s/etc/cloud/cloud.cfg.d' % (self.config.lxc_dir, self.name)):
+            os.makedirs('%s/%s/etc/cloud/cloud.cfg.d' % (self.config.lxc_dir, self.name))
+              
+
+        open('%s/%s/etc/cloud/cloud.cfg.d/90_dpkg.cfg' % (self.config.lxc_dir, self.name), 'w').write('''
+          dsmod: local
+
+          datasource_list: [ NoCloud ]
+        ''')
 
     def _setup_hostname(self):
         hostnameFd = open('%s/%s/etc/hostname' % (self.config.lxc_dir, self.name), 'w')
-        hostnameFd.write("%s.%s" % (self.name, self.network.domain))
+        hostnameFd.write("%s" % self.name)
         hostnameFd.close()
 
     def _setup_interface(self):

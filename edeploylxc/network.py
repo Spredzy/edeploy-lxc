@@ -40,7 +40,7 @@ class Network(object):
         self.name = network['name']
         self.network_type = network['type']
         self.gateway = network['gateway']
-        self.domain = network['gateway']
+        self.domain = network['domain']
         self.xml = self._get_network_xml()
 
     def _get_network_xml(self):

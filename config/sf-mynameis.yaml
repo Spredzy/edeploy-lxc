@@ -1,0 +1,60 @@
+general:
+    ssh_key: /home/yguenane/.ssh/id_rsa.pub
+    lxc_dir: /var/lib/lxc
+    tmp_dir: ../build/lxc
+    edeploy_dir: /var/lib/debootstrap/install/D7-H.1.0.0
+hosts:
+  -
+    address: 192.168.142.49
+    name: mynameispuppetmaster
+    role: softwarefactory
+    memory: 2048
+    vcpu: 2
+    network: toto
+    cloudinit: ../build/cloudinit/puppetmaster.cloudinit
+  -
+    address: 192.168.142.50
+    name: mynameisldap
+    role: softwarefactory
+    memory: 2048
+    vcpu: 2
+    network: toto
+    cloudinit: ../build/cloudinit/ldap.cloudinit
+  -
+    address: 192.168.142.51
+    name: mynameismysql
+    role: softwarefactory
+    memory: 2048
+    vcpu: 2
+    network: toto
+    cloudinit: ../build/cloudinit/mysql.cloudinit
+  -
+    address: 192.168.142.52
+    name: mynameisredmine
+    role: softwarefactory
+    memory: 2048
+    vcpu: 2
+    network: toto
+    cloudinit: ../build/cloudinit/redmine.cloudinit
+  -
+    address: 192.168.142.53
+    name: mynameisgerrit
+    role: softwarefactory
+    memory: 2048
+    vcpu: 2
+    network: toto
+    cloudinit: ../build/cloudinit/gerrit.cloudinit
+  -
+    address: 192.168.142.54
+    name: mynameisjenkins
+    role: softwarefactory
+    memory: 2048
+    vcpu: 2
+    network: toto
+    cloudinit: ../build/cloudinit/jenkins.cloudinit
+networks:
+  -
+    name: toto
+    type: bridge
+    domain: yanisguenane.fr
+    gateway: 192.168.142.1
